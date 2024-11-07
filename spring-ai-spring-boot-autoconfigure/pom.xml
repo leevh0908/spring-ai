@@ -21,7 +21,6 @@
 	</scm>
 
 	<properties>
-		<disable.checks>false</disable.checks>
 	</properties>
 
 	<dependencies>
@@ -405,6 +404,13 @@
 			<groupId>org.springframework.ai</groupId>
 			<artifactId>spring-ai-test</artifactId>
 			<version>${project.parent.version}</version>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>com.oracle.oci.sdk</groupId>
+			<artifactId>oci-java-sdk-common</artifactId>
+			<version>${oci-sdk-version}</version>
 			<scope>test</scope>
 		</dependency>
 
