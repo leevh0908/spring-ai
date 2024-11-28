@@ -19,6 +19,7 @@ package org.springframework.ai.vectorstore;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -83,10 +84,39 @@ public class ChromaVectorStoreIT {
 			assertThat(resultDoc.getMetadata()).containsKeys("meta2", "distance");
 
 			// Remove all documents from the store
-			vectorStore.delete(this.documents.stream().map(doc -> doc.getId()).toList());
+			assertThat(vectorStore.delete(this.documents.stream().map(doc -> doc.getId()).toList()))
+				.isEqualTo(Optional.of(Boolean.TRUE));
 
 			List<Document> results2 = vectorStore.similaritySearch(SearchRequest.query("Great").withTopK(1));
 			assertThat(results2).hasSize(0);
+		});
+	}
+
+	@Test
+	public void simpleSearch() {
+		this.contextRunner.run(context -> {
+
+			VectorStore vectorStore = context.getBean(VectorStore.class);
+
+			var document = Document.builder()
+				.withId("simpleDoc")
+				.withContent("The sky is blue because of Rayleigh scattering.")
+				.build();
+
+			vectorStore.add(List.of(document));
+
+			List<Document> results = vectorStore.similaritySearch("Why is the sky blue?");
+
+			assertThat(results).hasSize(1);
+			Document resultDoc = results.get(0);
+			assertThat(resultDoc.getId()).isEqualTo(document.getId());
+			assertThat(resultDoc.getContent()).isEqualTo("The sky is blue because of Rayleigh scattering.");
+
+			// Remove all documents from the store
+			assertThat(vectorStore.delete(List.of(document.getId()))).isEqualTo(Optional.of(Boolean.TRUE));
+
+			results = vectorStore.similaritySearch(SearchRequest.query("Why is the sky blue?"));
+			assertThat(results).hasSize(0);
 		});
 	}
 

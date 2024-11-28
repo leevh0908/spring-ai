@@ -29,7 +29,8 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
-import org.springframework.ai.rag.retrieval.source.DocumentRetriever;
+import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
+import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -44,10 +45,19 @@ import static org.mockito.Mockito.mock;
 class RetrievalAugmentationAdvisorTests {
 
 	@Test
-	void whenDocumentRetrieverIsNullThenThrow() {
-		assertThatThrownBy(() -> RetrievalAugmentationAdvisor.builder().documentRetriever(null).build())
+	void whenQueryTransformersContainNullElementsThenThrow() {
+		assertThatThrownBy(() -> RetrievalAugmentationAdvisor.builder()
+			.queryTransformers(mock(QueryTransformer.class), null)
+			.documentRetriever(mock(DocumentRetriever.class))
+			.build()).isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("queryTransformers cannot contain null elements");
+	}
+
+	@Test
+	void whenQueryRouterIsNullThenThrow() {
+		assertThatThrownBy(() -> RetrievalAugmentationAdvisor.builder().queryRouter(null).build())
 			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessageContaining("documentRetriever cannot be null");
+			.hasMessageContaining("queryRouter cannot be null");
 	}
 
 	@Test

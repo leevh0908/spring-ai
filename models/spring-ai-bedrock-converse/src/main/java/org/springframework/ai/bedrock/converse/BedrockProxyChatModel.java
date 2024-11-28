@@ -36,7 +36,6 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.publisher.Sinks.EmitFailureHandler;
-import reactor.core.publisher.Sinks.EmitResult;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.core.document.Document;
@@ -56,6 +55,7 @@ import software.amazon.awssdk.services.bedrockruntime.model.ImageBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.ImageSource;
 import software.amazon.awssdk.services.bedrockruntime.model.InferenceConfiguration;
 import software.amazon.awssdk.services.bedrockruntime.model.Message;
+import software.amazon.awssdk.services.bedrockruntime.model.StopReason;
 import software.amazon.awssdk.services.bedrockruntime.model.SystemContentBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.Tool;
 import software.amazon.awssdk.services.bedrockruntime.model.ToolConfiguration;
@@ -88,7 +88,7 @@ import org.springframework.ai.chat.prompt.ChatOptionsBuilder;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.ModelOptionsUtils;
 import org.springframework.ai.model.function.FunctionCallback;
-import org.springframework.ai.model.function.FunctionCallbackContext;
+import org.springframework.ai.model.function.FunctionCallbackResolver;
 import org.springframework.ai.model.function.FunctionCallingOptions;
 import org.springframework.ai.model.function.FunctionCallingOptionsBuilder;
 import org.springframework.ai.model.function.FunctionCallingOptionsBuilder.PortableFunctionCallingOptions;
@@ -146,10 +146,10 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 
 	public BedrockProxyChatModel(BedrockRuntimeClient bedrockRuntimeClient,
 			BedrockRuntimeAsyncClient bedrockRuntimeAsyncClient, FunctionCallingOptions defaultOptions,
-			FunctionCallbackContext functionCallbackContext, List<FunctionCallback> toolFunctionCallbacks,
+			FunctionCallbackResolver functionCallbackResolver, List<FunctionCallback> toolFunctionCallbacks,
 			ObservationRegistry observationRegistry) {
 
-		super(functionCallbackContext, defaultOptions, toolFunctionCallbacks);
+		super(functionCallbackResolver, defaultOptions, toolFunctionCallbacks);
 
 		Assert.notNull(bedrockRuntimeClient, "bedrockRuntimeClient must not be null");
 		Assert.notNull(bedrockRuntimeAsyncClient, "bedrockRuntimeAsyncClient must not be null");
@@ -170,6 +170,10 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 	 */
 	@Override
 	public ChatResponse call(Prompt prompt) {
+		return this.internalCall(prompt, null);
+	}
+
+	private ChatResponse internalCall(Prompt prompt, ChatResponse perviousChatResponse) {
 
 		ConverseRequest converseRequest = this.createRequest(prompt);
 
@@ -186,7 +190,9 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 
 				ConverseResponse converseResponse = this.bedrockRuntimeClient.converse(converseRequest);
 
-				var response = this.toChatResponse(converseResponse);
+				logger.debug("ConverseResponse: {}", converseResponse);
+
+				var response = this.toChatResponse(converseResponse, perviousChatResponse);
 
 				observationContext.setResponse(response);
 
@@ -194,9 +200,9 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 			});
 
 		if (!this.isProxyToolCalls(prompt, this.defaultOptions) && chatResponse != null
-				&& this.isToolCall(chatResponse, Set.of("tool_use"))) {
+				&& this.isToolCall(chatResponse, Set.of(StopReason.TOOL_USE.toString()))) {
 			var toolCallConversation = this.handleToolCalls(prompt, chatResponse);
-			return this.call(new Prompt(toolCallConversation, prompt.getOptions()));
+			return this.internalCall(new Prompt(toolCallConversation, prompt.getOptions()), chatResponse);
 		}
 
 		return chatResponse;
@@ -403,7 +409,7 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 	 * @param response The Bedrock Converse response.
 	 * @return The ChatResponse entity.
 	 */
-	private ChatResponse toChatResponse(ConverseResponse response) {
+	private ChatResponse toChatResponse(ConverseResponse response, ChatResponse perviousChatResponse) {
 
 		Assert.notNull(response, "'response' must not be null.");
 
@@ -413,14 +419,14 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 			.stream()
 			.filter(content -> content.type() != ContentBlock.Type.TOOL_USE)
 			.map(content -> new Generation(new AssistantMessage(content.text(), Map.of()),
-					ChatGenerationMetadata.from(response.stopReasonAsString(), null)))
+					ChatGenerationMetadata.builder().finishReason(response.stopReasonAsString()).build()))
 			.toList();
 
 		List<Generation> allGenerations = new ArrayList<>(generations);
 
 		if (response.stopReasonAsString() != null && generations.isEmpty()) {
 			Generation generation = new Generation(new AssistantMessage(null, Map.of()),
-					ChatGenerationMetadata.from(response.stopReasonAsString(), null));
+					ChatGenerationMetadata.builder().finishReason(response.stopReasonAsString()).build());
 			allGenerations.add(generation);
 		}
 
@@ -445,19 +451,30 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 
 			AssistantMessage assistantMessage = new AssistantMessage("", Map.of(), toolCalls);
 			Generation toolCallGeneration = new Generation(assistantMessage,
-					ChatGenerationMetadata.from(response.stopReasonAsString(), null));
+					ChatGenerationMetadata.builder().finishReason(response.stopReasonAsString()).build());
 			allGenerations.add(toolCallGeneration);
 		}
 
-		DefaultUsage usage = new DefaultUsage(response.usage().inputTokens().longValue(),
-				response.usage().outputTokens().longValue(), response.usage().totalTokens().longValue());
+		Long promptTokens = response.usage().inputTokens().longValue();
+		Long generationTokens = response.usage().outputTokens().longValue();
+		Long totalTokens = response.usage().totalTokens().longValue();
+
+		if (perviousChatResponse != null && perviousChatResponse.getMetadata() != null
+				&& perviousChatResponse.getMetadata().getUsage() != null) {
+
+			promptTokens += perviousChatResponse.getMetadata().getUsage().getPromptTokens();
+			generationTokens += perviousChatResponse.getMetadata().getUsage().getGenerationTokens();
+			totalTokens += perviousChatResponse.getMetadata().getUsage().getTotalTokens();
+		}
+
+		DefaultUsage usage = new DefaultUsage(promptTokens, generationTokens, totalTokens);
 
 		Document modelResponseFields = response.additionalModelResponseFields();
 
 		ConverseMetrics metrics = response.metrics();
 
 		var chatResponseMetaData = ChatResponseMetadata.builder()
-			.withId(response.responseMetadata().requestId())
+			.withId(response.responseMetadata() != null ? response.responseMetadata().requestId() : "Unknown")
 			.withUsage(usage)
 			.build();
 
@@ -474,13 +491,15 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 	 */
 	@Override
 	public Flux<ChatResponse> stream(Prompt prompt) {
+		return this.internalStream(prompt, null);
+	}
+
+	private Flux<ChatResponse> internalStream(Prompt prompt, ChatResponse perviousChatResponse) {
 		Assert.notNull(prompt, "'prompt' must not be null");
 
 		return Flux.deferContextual(contextView -> {
 
 			ConverseRequest converseRequest = this.createRequest(prompt);
-
-			// System.out.println(">>>>> CONVERSE REQUEST: " + converseRequest);
 
 			ChatModelObservationContext observationContext = ChatModelObservationContext.builder()
 				.prompt(prompt)
@@ -505,13 +524,13 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 			Flux<ConverseStreamOutput> response = converseStream(converseStreamRequest);
 
 			// @formatter:off
-			Flux<ChatResponse> chatResponses = ConverseApiUtils.toChatResponse(response);
+			Flux<ChatResponse> chatResponses = ConverseApiUtils.toChatResponse(response, perviousChatResponse);
 
 			Flux<ChatResponse> chatResponseFlux = chatResponses.switchMap(chatResponse -> {
 				if (!this.isProxyToolCalls(prompt, this.defaultOptions) && chatResponse != null
-						&& this.isToolCall(chatResponse, Set.of("tool_use"))) {
+						&& this.isToolCall(chatResponse, Set.of(StopReason.TOOL_USE.toString()))) {
 					var toolCallConversation = this.handleToolCalls(prompt, chatResponse);
-					return this.stream(new Prompt(toolCallConversation, prompt.getOptions()));
+					return this.internalStream(new Prompt(toolCallConversation, prompt.getOptions()), chatResponse);
 				}
 				return Mono.just(chatResponse);
 			})
@@ -523,6 +542,9 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 			return new MessageAggregator().aggregate(chatResponseFlux, observationContext::setResponse);
 		});
 	}
+
+	public static final EmitFailureHandler DEFAULT_EMIT_FAILURE_HANDLER = EmitFailureHandler
+		.busyLooping(Duration.ofSeconds(10));
 
 	/**
 	 * Invoke the model and return the response stream.
@@ -541,26 +563,19 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 		ConverseStreamResponseHandler.Visitor visitor = ConverseStreamResponseHandler.Visitor.builder()
 			.onDefault(output -> {
 				logger.debug("Received converse stream output:{}", output);
-				eventSink.tryEmitNext(output);
+				eventSink.emitNext(output, DEFAULT_EMIT_FAILURE_HANDLER);
 			})
 			.build();
 
 		ConverseStreamResponseHandler responseHandler = ConverseStreamResponseHandler.builder()
 			.onEventStream(stream -> stream.subscribe(e -> e.accept(visitor)))
 			.onComplete(() -> {
-				EmitResult emitResult = eventSink.tryEmitComplete();
-
-				while (!emitResult.isSuccess()) {
-					logger.info("Emitting complete:{}", emitResult);
-					emitResult = eventSink.tryEmitComplete();
-				}
-
-				eventSink.emitComplete(EmitFailureHandler.busyLooping(Duration.ofSeconds(3)));
+				eventSink.emitComplete(DEFAULT_EMIT_FAILURE_HANDLER);
 				logger.info("Completed streaming response.");
 			})
 			.onError(error -> {
 				logger.error("Error handling Bedrock converse stream response", error);
-				eventSink.tryEmitError(error);
+				eventSink.emitError(error, DEFAULT_EMIT_FAILURE_HANDLER);
 			})
 			.build();
 
@@ -593,7 +608,7 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 
 		private FunctionCallingOptions defaultOptions = new FunctionCallingOptionsBuilder().build();
 
-		private FunctionCallbackContext functionCallbackContext;
+		private FunctionCallbackResolver functionCallbackResolver;
 
 		private List<FunctionCallback> toolFunctionCallbacks;
 
@@ -632,8 +647,18 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 			return this;
 		}
 
-		public Builder withFunctionCallbackContext(FunctionCallbackContext functionCallbackContext) {
-			this.functionCallbackContext = functionCallbackContext;
+		/**
+		 * @deprecated Use {@link #functionCallbackResolver(FunctionCallbackResolver)}
+		 * instead.
+		 */
+		@Deprecated
+		public Builder withFunctionCallbackContext(FunctionCallbackResolver functionCallbackResolver) {
+			this.functionCallbackResolver = functionCallbackResolver;
+			return this;
+		}
+
+		public Builder functionCallbackResolver(FunctionCallbackResolver functionCallbackResolver) {
+			this.functionCallbackResolver = functionCallbackResolver;
 			return this;
 		}
 
@@ -692,7 +717,7 @@ public class BedrockProxyChatModel extends AbstractToolCallSupport implements Ch
 			}
 
 			var bedrockProxyChatModel = new BedrockProxyChatModel(this.bedrockRuntimeClient,
-					this.bedrockRuntimeAsyncClient, this.defaultOptions, this.functionCallbackContext,
+					this.bedrockRuntimeAsyncClient, this.defaultOptions, this.functionCallbackResolver,
 					this.toolFunctionCallbacks, this.observationRegistry);
 
 			if (this.customObservationConvention != null) {

@@ -47,7 +47,7 @@ import org.springframework.ai.chat.prompt.ChatOptionsBuilder;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.ModelOptionsUtils;
 import org.springframework.ai.model.function.FunctionCallback;
-import org.springframework.ai.model.function.FunctionCallbackContext;
+import org.springframework.ai.model.function.FunctionCallbackResolver;
 import org.springframework.ai.model.function.FunctionCallingOptions;
 import org.springframework.ai.ollama.api.OllamaApi;
 import org.springframework.ai.ollama.api.OllamaApi.ChatRequest;
@@ -74,6 +74,7 @@ import org.springframework.util.StringUtils;
  * @author Christian Tzolov
  * @author luocongqiu
  * @author Thomas Vitale
+ * @author Jihoon Kim
  * @since 1.0.0
  */
 public class OllamaChatModel extends AbstractToolCallSupport implements ChatModel {
@@ -91,13 +92,13 @@ public class OllamaChatModel extends AbstractToolCallSupport implements ChatMode
 	private ChatModelObservationConvention observationConvention = DEFAULT_OBSERVATION_CONVENTION;
 
 	public OllamaChatModel(OllamaApi ollamaApi, OllamaOptions defaultOptions,
-			FunctionCallbackContext functionCallbackContext, List<FunctionCallback> toolFunctionCallbacks,
+			FunctionCallbackResolver functionCallbackResolver, List<FunctionCallback> toolFunctionCallbacks,
 			ObservationRegistry observationRegistry, ModelManagementOptions modelManagementOptions) {
-		super(functionCallbackContext, defaultOptions, toolFunctionCallbacks);
+		super(functionCallbackResolver, defaultOptions, toolFunctionCallbacks);
 		Assert.notNull(ollamaApi, "ollamaApi must not be null");
 		Assert.notNull(defaultOptions, "defaultOptions must not be null");
 		Assert.notNull(observationRegistry, "observationRegistry must not be null");
-		Assert.notNull(observationRegistry, "modelManagementOptions must not be null");
+		Assert.notNull(modelManagementOptions, "modelManagementOptions must not be null");
 		this.chatApi = ollamaApi;
 		this.defaultOptions = defaultOptions;
 		this.observationRegistry = observationRegistry;
@@ -118,8 +119,8 @@ public class OllamaChatModel extends AbstractToolCallSupport implements ChatMode
 			.withKeyValue("eval-duration", response.evalDuration())
 			.withKeyValue("eval-count", response.evalCount())
 			.withKeyValue("load-duration", response.loadDuration())
-			.withKeyValue("eval-duration", response.promptEvalDuration())
-			.withKeyValue("eval-count", response.promptEvalCount())
+			.withKeyValue("prompt-eval-duration", response.promptEvalDuration())
+			.withKeyValue("prompt-eval-count", response.promptEvalCount())
 			.withKeyValue("total-duration", response.totalDuration())
 			.withKeyValue("done", response.done())
 			.build();
@@ -155,7 +156,9 @@ public class OllamaChatModel extends AbstractToolCallSupport implements ChatMode
 
 				ChatGenerationMetadata generationMetadata = ChatGenerationMetadata.NULL;
 				if (ollamaResponse.promptEvalCount() != null && ollamaResponse.evalCount() != null) {
-					generationMetadata = ChatGenerationMetadata.from(ollamaResponse.doneReason(), null);
+					generationMetadata = ChatGenerationMetadata.builder()
+						.finishReason(ollamaResponse.doneReason())
+						.build();
 				}
 
 				var generator = new Generation(assistantMessage, generationMetadata);
@@ -216,7 +219,7 @@ public class OllamaChatModel extends AbstractToolCallSupport implements ChatMode
 
 				ChatGenerationMetadata generationMetadata = ChatGenerationMetadata.NULL;
 				if (chunk.promptEvalCount() != null && chunk.evalCount() != null) {
-					generationMetadata = ChatGenerationMetadata.from(chunk.doneReason(), null);
+					generationMetadata = ChatGenerationMetadata.builder().finishReason(chunk.doneReason()).build();
 				}
 
 				var generator = new Generation(assistantMessage, generationMetadata);
@@ -398,7 +401,7 @@ public class OllamaChatModel extends AbstractToolCallSupport implements ChatMode
 
 		private OllamaOptions defaultOptions = OllamaOptions.create().withModel(OllamaModel.MISTRAL.id());
 
-		private FunctionCallbackContext functionCallbackContext;
+		private FunctionCallbackResolver functionCallbackResolver;
 
 		private List<FunctionCallback> toolFunctionCallbacks = List.of();
 
@@ -419,8 +422,18 @@ public class OllamaChatModel extends AbstractToolCallSupport implements ChatMode
 			return this;
 		}
 
-		public Builder withFunctionCallbackContext(FunctionCallbackContext functionCallbackContext) {
-			this.functionCallbackContext = functionCallbackContext;
+		/**
+		 * @deprecated use the {@link functionCallbackResolver(FunctionCallbackResolver)}
+		 * instead
+		 */
+		@Deprecated
+		public Builder withFunctionCallbackContext(FunctionCallbackResolver functionCallbackContext) {
+			this.functionCallbackResolver = functionCallbackContext;
+			return this;
+		}
+
+		public Builder functionCallbackResolver(FunctionCallbackResolver functionCallbackResolver) {
+			this.functionCallbackResolver = functionCallbackResolver;
 			return this;
 		}
 
@@ -440,7 +453,7 @@ public class OllamaChatModel extends AbstractToolCallSupport implements ChatMode
 		}
 
 		public OllamaChatModel build() {
-			return new OllamaChatModel(this.ollamaApi, this.defaultOptions, this.functionCallbackContext,
+			return new OllamaChatModel(this.ollamaApi, this.defaultOptions, this.functionCallbackResolver,
 					this.toolFunctionCallbacks, this.observationRegistry, this.modelManagementOptions);
 		}
 

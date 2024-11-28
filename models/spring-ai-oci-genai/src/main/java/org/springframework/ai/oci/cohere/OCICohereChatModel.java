@@ -170,7 +170,7 @@ public class OCICohereChatModel implements ChatModel {
 	}
 
 	private List<Generation> getGenerations(Prompt prompt, OCICohereChatOptions options) {
-		com.oracle.bmc.generativeaiinference.responses.ChatResponse cr = genAi
+		com.oracle.bmc.generativeaiinference.responses.ChatResponse cr = this.genAi
 			.chat(toCohereChatRequest(prompt, options));
 		return toGenerations(cr, options);
 
@@ -181,7 +181,9 @@ public class OCICohereChatModel implements ChatModel {
 		BaseChatResponse cr = ociChatResponse.getChatResult().getChatResponse();
 		if (cr instanceof CohereChatResponse resp) {
 			List<Generation> generations = new ArrayList<>();
-			ChatGenerationMetadata metadata = ChatGenerationMetadata.from(resp.getFinishReason().getValue(), null);
+			ChatGenerationMetadata metadata = ChatGenerationMetadata.builder()
+				.finishReason(resp.getFinishReason().getValue())
+				.build();
 			AssistantMessage message = new AssistantMessage(resp.getText(), Map.of());
 			generations.add(new Generation(message, metadata));
 			return generations;

@@ -31,6 +31,7 @@ import org.apache.hc.core5.http.HttpHost;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -356,6 +357,7 @@ class OpenSearchVectorStoreIT {
 	}
 
 	@Test
+	@Disabled("GH-1645")
 	public void searchDocumentsInTwoIndicesTest() {
 		getContextRunner().run(context -> {
 			// given
@@ -409,7 +411,7 @@ class OpenSearchVectorStoreIT {
 						new OpenSearchClient(ApacheHttpClient5TransportBuilder
 							.builder(HttpHost.create(opensearchContainer.getHttpHostAddress()))
 							.build()),
-						embeddingModel, OpenSearchVectorStore.DEFAULT_MAPPING_EMBEDDING_TYPE_KNN_VECTOR_DIMENSION_1536,
+						embeddingModel, OpenSearchVectorStore.DEFAULT_MAPPING_EMBEDDING_TYPE_KNN_VECTOR_DIMENSION,
 						true);
 			}
 			catch (URISyntaxException e) {

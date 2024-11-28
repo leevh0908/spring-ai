@@ -37,6 +37,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.ai.converter.ListOutputConverter;
+import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.ai.model.function.FunctionCallingOptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -212,7 +213,11 @@ class BedrockConverseChatClientIT {
 		// @formatter:off
 		String response = ChatClient.create(this.chatModel)
 				.prompt("What's the weather like in San Francisco, Tokyo, and Paris? Return the temperature in Celsius.")
-				.function("getCurrentWeather", "Get the weather in location", new MockWeatherService())
+				.functions(FunctionCallback.builder()
+						.description("Get the weather in location")
+						.function("getCurrentWeather", new MockWeatherService())
+						.inputType(MockWeatherService.Request.class)
+						.build())
 				.call()
 				.content();
 		// @formatter:on
@@ -223,12 +228,51 @@ class BedrockConverseChatClientIT {
 	}
 
 	@Test
+	void functionCallWithUsageMetadataTest() {
+
+		// @formatter:off
+		ChatResponse response = ChatClient.create(this.chatModel)
+				.prompt("What's the weather like in San Francisco, Tokyo, and Paris? Return the temperature in Celsius.")
+				.functions(FunctionCallback.builder()
+						.description("Get the weather in location")
+						.function("getCurrentWeather", new MockWeatherService())
+						.inputType(MockWeatherService.Request.class)
+						.build())
+				.call()
+				.chatResponse();
+		// @formatter:on
+
+		var metadata = response.getMetadata();
+
+		assertThat(metadata.getUsage()).isNotNull();
+
+		logger.info(metadata.getUsage().toString());
+
+		assertThat(metadata.getUsage().getPromptTokens()).isGreaterThan(500);
+		assertThat(metadata.getUsage().getPromptTokens()).isLessThan(3500);
+
+		assertThat(metadata.getUsage().getGenerationTokens()).isGreaterThan(0);
+		assertThat(metadata.getUsage().getGenerationTokens()).isLessThan(1500);
+
+		assertThat(metadata.getUsage().getTotalTokens())
+			.isEqualTo(metadata.getUsage().getPromptTokens() + metadata.getUsage().getGenerationTokens());
+
+		logger.info("Response: {}", response);
+
+		assertThat(response.getResult().getOutput().getContent()).contains("30", "10", "15");
+	}
+
+	@Test
 	void functionCallWithAdvisorTest() {
 
 		// @formatter:off
 		String response = ChatClient.create(this.chatModel)
 				.prompt("What's the weather like in San Francisco, Tokyo, and Paris? Return the temperature in Celsius.")
-				.function("getCurrentWeather", "Get the weather in location", new MockWeatherService())
+				.functions(FunctionCallback.builder()
+						.description("Get the weather in location")
+						.function("getCurrentWeather", new MockWeatherService())
+						.inputType(MockWeatherService.Request.class)
+						.build())
 				.advisors(new SimpleLoggerAdvisor())
 				.call()
 				.content();
@@ -244,7 +288,11 @@ class BedrockConverseChatClientIT {
 
 		// @formatter:off
 		String response = ChatClient.builder(this.chatModel)
-			.defaultFunction("getCurrentWeather", "Get the weather in location", new MockWeatherService())
+			.defaultFunctions(FunctionCallback.builder()
+				.description("Get the weather in location")
+				.function("getCurrentWeather", new MockWeatherService())
+				.inputType(MockWeatherService.Request.class)
+				.build())
 			.defaultUser(u -> u.text("What's the weather like in San Francisco, Tokyo, and Paris? Return the temperature in Celsius."))
 			.build()
 			.prompt()
@@ -261,14 +309,39 @@ class BedrockConverseChatClientIT {
 	void streamFunctionCallTest() {
 
 		// @formatter:off
-		Flux<String> response = ChatClient.create(this.chatModel).prompt()
+		Flux<ChatResponse> response = ChatClient.create(this.chatModel).prompt()
 				.user("What's the weather like in San Francisco, Tokyo, and Paris? Return the temperature in Celsius.")
-				.function("getCurrentWeather", "Get the weather in location", new MockWeatherService())
+				.functions(FunctionCallback.builder()
+					.description("Get the weather in location")
+					.function("getCurrentWeather", new MockWeatherService())
+					.inputType(MockWeatherService.Request.class)
+					.build())
 				.stream()
-				.content();
+				.chatResponse();
 		// @formatter:on
 
-		String content = response.collectList().block().stream().collect(Collectors.joining());
+		List<ChatResponse> chatResponses = response.collectList().block();
+
+		// chatResponses.forEach(cr -> logger.info("Response: {}", cr));
+		var lastChatResponse = chatResponses.get(chatResponses.size() - 1);
+		var metadata = lastChatResponse.getMetadata();
+		assertThat(metadata.getUsage()).isNotNull();
+
+		logger.info(metadata.getUsage().toString());
+
+		assertThat(metadata.getUsage().getPromptTokens()).isGreaterThan(1500);
+		assertThat(metadata.getUsage().getPromptTokens()).isLessThan(3500);
+
+		assertThat(metadata.getUsage().getGenerationTokens()).isGreaterThan(0);
+		assertThat(metadata.getUsage().getGenerationTokens()).isLessThan(1500);
+
+		assertThat(metadata.getUsage().getTotalTokens())
+			.isEqualTo(metadata.getUsage().getPromptTokens() + metadata.getUsage().getGenerationTokens());
+
+		String content = chatResponses.stream()
+			.filter(cr -> cr.getResult() != null)
+			.map(cr -> cr.getResult().getOutput().getContent())
+			.collect(Collectors.joining());
 		logger.info("Response: {}", content);
 
 		assertThat(content).contains("30", "10", "15");
@@ -280,7 +353,11 @@ class BedrockConverseChatClientIT {
 		// @formatter:off
 		Flux<String> response = ChatClient.create(this.chatModel).prompt()
 				.user("What's the weather like in Paris? Return the temperature in Celsius.")
-				.function("getCurrentWeather", "Get the weather in location", new MockWeatherService())
+				.functions(FunctionCallback.builder()
+					.description("Get the weather in location")
+					.function("getCurrentWeather", new MockWeatherService())
+					.inputType(MockWeatherService.Request.class)
+					.build())
 				.stream()
 				.content();
 		// @formatter:on

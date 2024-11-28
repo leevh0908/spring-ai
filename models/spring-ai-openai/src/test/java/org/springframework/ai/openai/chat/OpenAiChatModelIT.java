@@ -48,7 +48,7 @@ import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.ai.converter.ListOutputConverter;
 import org.springframework.ai.converter.MapOutputConverter;
 import org.springframework.ai.model.Media;
-import org.springframework.ai.model.function.FunctionCallbackWrapper;
+import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.OpenAiTestConfiguration;
 import org.springframework.ai.openai.api.OpenAiApi;
@@ -328,10 +328,10 @@ public class OpenAiChatModelIT extends AbstractIT {
 
 		var promptOptions = OpenAiChatOptions.builder()
 			.withModel(OpenAiApi.ChatModel.GPT_4_O.getValue())
-			.withFunctionCallbacks(List.of(FunctionCallbackWrapper.builder(new MockWeatherService())
-				.withName("getCurrentWeather")
-				.withDescription("Get the weather in location")
-				.withResponseConverter(response -> "" + response.temp() + response.unit())
+			.withFunctionCallbacks(List.of(FunctionCallback.builder()
+				.description("Get the weather in location")
+				.function("getCurrentWeather", new MockWeatherService())
+				.inputType(MockWeatherService.Request.class)
 				.build()))
 			.build();
 
@@ -353,10 +353,10 @@ public class OpenAiChatModelIT extends AbstractIT {
 
 		var promptOptions = OpenAiChatOptions.builder()
 			// .withModel(OpenAiApi.ChatModel.GPT_4_TURBO_PREVIEW.getValue())
-			.withFunctionCallbacks(List.of(FunctionCallbackWrapper.builder(new MockWeatherService())
-				.withName("getCurrentWeather")
-				.withDescription("Get the weather in location")
-				.withResponseConverter(response -> "" + response.temp() + response.unit())
+			.withFunctionCallbacks(List.of(FunctionCallback.builder()
+				.description("Get the weather in location")
+				.function("getCurrentWeather", new MockWeatherService())
+				.inputType(MockWeatherService.Request.class)
 				.build()))
 			.build();
 
@@ -431,6 +431,42 @@ public class OpenAiChatModelIT extends AbstractIT {
 		logger.info("Response: {}", content);
 		assertThat(content).contains("bananas", "apple");
 		assertThat(content).containsAnyOf("bowl", "basket", "fruit stand");
+	}
+
+	@ParameterizedTest(name = "{0} : {displayName} ")
+	@ValueSource(strings = { "gpt-4o-audio-preview" })
+	void multiModalityInputAudio(String modelName) {
+		var audioResource = new ClassPathResource("speech1.mp3");
+		var userMessage = new UserMessage("What is this recording about?",
+				List.of(new Media(MimeTypeUtils.parseMimeType("audio/mp3"), audioResource)));
+
+		ChatResponse response = chatModel
+			.call(new Prompt(List.of(userMessage), OpenAiChatOptions.builder().withModel(modelName).build()));
+
+		logger.info(response.getResult().getOutput().getContent());
+		assertThat(response.getResult().getOutput().getContent()).containsIgnoringCase("hobbits");
+	}
+
+	@ParameterizedTest(name = "{0} : {displayName} ")
+	@ValueSource(strings = { "gpt-4o-audio-preview" })
+	void streamingMultiModalityInputAudio(String modelName) {
+		var audioResource = new ClassPathResource("speech1.mp3");
+		var userMessage = new UserMessage("What is this recording about?",
+				List.of(new Media(MimeTypeUtils.parseMimeType("audio/mp3"), audioResource)));
+
+		Flux<ChatResponse> response = chatModel
+			.stream(new Prompt(List.of(userMessage), OpenAiChatOptions.builder().withModel(modelName).build()));
+
+		String content = response.collectList()
+			.block()
+			.stream()
+			.map(ChatResponse::getResults)
+			.flatMap(List::stream)
+			.map(Generation::getOutput)
+			.map(AssistantMessage::getContent)
+			.collect(Collectors.joining());
+		logger.info("Response: {}", content);
+		assertThat(content).containsIgnoringCase("hobbits");
 	}
 
 	@Test
