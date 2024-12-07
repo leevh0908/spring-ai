@@ -14,19 +14,9 @@
  * limitations under the License.
  */
 
-package org.springframework.ai;
+@NonNullApi
+@NonNullFields
+package org.springframework.ai.vectorstore;
 
-import org.testcontainers.utility.DockerImageName;
-
-/**
- * @author Thomas Vitale
- */
-public final class ChromaImage {
-
-	public static final DockerImageName DEFAULT_IMAGE = DockerImageName.parse("ghcr.io/chroma-core/chroma:0.5.20");
-
-	private ChromaImage() {
-
-	}
-
-}
+import org.springframework.lang.NonNullApi;
+import org.springframework.lang.NonNullFields;

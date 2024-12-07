@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.springframework.ai.vectorstore;
+package org.springframework.ai.chroma.vectorstore;
 
 import java.util.Collections;
 import java.util.List;
@@ -24,16 +24,18 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.springframework.ai.document.DocumentMetadata;
 import org.testcontainers.chromadb.ChromaDBContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import org.springframework.ai.ChromaImage;
-import org.springframework.ai.chroma.ChromaApi;
+import org.springframework.ai.chroma.ChromaImage;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -81,7 +83,7 @@ public class ChromaVectorStoreIT {
 			assertThat(resultDoc.getId()).isEqualTo(this.documents.get(2).getId());
 			assertThat(resultDoc.getContent()).isEqualTo(
 					"Great Depression Great Depression Great Depression Great Depression Great Depression Great Depression");
-			assertThat(resultDoc.getMetadata()).containsKeys("meta2", "distance");
+			assertThat(resultDoc.getMetadata()).containsKeys("meta2", DocumentMetadata.DISTANCE.value());
 
 			// Remove all documents from the store
 			assertThat(vectorStore.delete(this.documents.stream().map(doc -> doc.getId()).toList()))
@@ -99,8 +101,8 @@ public class ChromaVectorStoreIT {
 			VectorStore vectorStore = context.getBean(VectorStore.class);
 
 			var document = Document.builder()
-				.withId("simpleDoc")
-				.withContent("The sky is blue because of Rayleigh scattering.")
+				.id("simpleDoc")
+				.content("The sky is blue because of Rayleigh scattering.")
 				.build();
 
 			vectorStore.add(List.of(document));
@@ -179,7 +181,7 @@ public class ChromaVectorStoreIT {
 			assertThat(resultDoc.getId()).isEqualTo(document.getId());
 			assertThat(resultDoc.getContent()).isEqualTo("Spring AI rocks!!");
 			assertThat(resultDoc.getMetadata()).containsKey("meta1");
-			assertThat(resultDoc.getMetadata()).containsKey("distance");
+			assertThat(resultDoc.getMetadata()).containsKey(DocumentMetadata.DISTANCE.value());
 
 			Document sameIdDocument = new Document(document.getId(),
 					"The World is Big and Salvation Lurks Around the Corner",
@@ -194,7 +196,7 @@ public class ChromaVectorStoreIT {
 			assertThat(resultDoc.getId()).isEqualTo(document.getId());
 			assertThat(resultDoc.getContent()).isEqualTo("The World is Big and Salvation Lurks Around the Corner");
 			assertThat(resultDoc.getMetadata()).containsKey("meta2");
-			assertThat(resultDoc.getMetadata()).containsKey("distance");
+			assertThat(resultDoc.getMetadata()).containsKey(DocumentMetadata.DISTANCE.value());
 
 			// Remove all documents from the store
 			vectorStore.delete(List.of(document.getId()));
@@ -213,13 +215,13 @@ public class ChromaVectorStoreIT {
 			var request = SearchRequest.query("Great").withTopK(5);
 			List<Document> fullResult = vectorStore.similaritySearch(request.withSimilarityThresholdAll());
 
-			List<Float> distances = fullResult.stream().map(doc -> (Float) doc.getMetadata().get("distance")).toList();
+			List<Double> scores = fullResult.stream().map(Document::getScore).toList();
 
-			assertThat(distances).hasSize(3);
+			assertThat(scores).hasSize(3);
 
-			float threshold = (distances.get(0) + distances.get(1)) / 2;
+			double similarityThreshold = (scores.get(0) + scores.get(1)) / 2;
 
-			List<Document> results = vectorStore.similaritySearch(request.withSimilarityThreshold(1 - threshold));
+			List<Document> results = vectorStore.similaritySearch(request.withSimilarityThreshold(similarityThreshold));
 
 			assertThat(results).hasSize(1);
 			Document resultDoc = results.get(0);
@@ -227,7 +229,8 @@ public class ChromaVectorStoreIT {
 			assertThat(resultDoc.getContent()).isEqualTo(
 					"Great Depression Great Depression Great Depression Great Depression Great Depression Great Depression");
 			assertThat(resultDoc.getMetadata()).containsKey("meta2");
-			assertThat(resultDoc.getMetadata()).containsKey("distance");
+			assertThat(resultDoc.getMetadata()).containsKey(DocumentMetadata.DISTANCE.value());
+			assertThat(resultDoc.getScore()).isGreaterThanOrEqualTo(similarityThreshold);
 
 			// Remove all documents from the store
 			vectorStore.delete(this.documents.stream().map(doc -> doc.getId()).toList());
@@ -249,7 +252,11 @@ public class ChromaVectorStoreIT {
 
 		@Bean
 		public VectorStore chromaVectorStore(EmbeddingModel embeddingModel, ChromaApi chromaApi) {
-			return new ChromaVectorStore(embeddingModel, chromaApi, "TestCollection", true);
+			return ChromaVectorStore.builder(chromaApi)
+				.embeddingModel(embeddingModel)
+				.collectionName("TestCollection")
+				.initializeSchema(true)
+				.build();
 		}
 
 		@Bean

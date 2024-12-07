@@ -35,6 +35,7 @@ import io.qdrant.client.grpc.Points.SearchPoints;
 import io.qdrant.client.grpc.Points.UpdateStatus;
 
 import org.springframework.ai.document.Document;
+import org.springframework.ai.document.DocumentMetadata;
 import org.springframework.ai.embedding.BatchingStrategy;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingOptionsBuilder;
@@ -57,6 +58,7 @@ import org.springframework.util.Assert;
  * @author Eddú Meléndez
  * @author Josh Long
  * @author Soby Chacko
+ * @author Thomas Vitale
  * @since 0.8.1
  */
 public class QdrantVectorStore extends AbstractObservationVectorStore implements InitializingBean {
@@ -64,8 +66,6 @@ public class QdrantVectorStore extends AbstractObservationVectorStore implements
 	public static final String DEFAULT_COLLECTION_NAME = "vector_store";
 
 	private static final String CONTENT_FIELD_NAME = "doc_content";
-
-	private static final String DISTANCE_FIELD_NAME = "distance";
 
 	private final EmbeddingModel embeddingModel;
 
@@ -127,12 +127,13 @@ public class QdrantVectorStore extends AbstractObservationVectorStore implements
 		try {
 
 			// Compute and assign an embedding to the document.
-			this.embeddingModel.embed(documents, EmbeddingOptionsBuilder.builder().build(), this.batchingStrategy);
+			List<float[]> embeddings = this.embeddingModel.embed(documents, EmbeddingOptionsBuilder.builder().build(),
+					this.batchingStrategy);
 
 			List<PointStruct> points = documents.stream()
 				.map(document -> PointStruct.newBuilder()
 					.setId(io.qdrant.client.PointIdFactory.id(UUID.fromString(document.getId())))
-					.setVectors(io.qdrant.client.VectorsFactory.vectors(document.getEmbedding()))
+					.setVectors(io.qdrant.client.VectorsFactory.vectors(embeddings.get(documents.indexOf(document))))
 					.putAllPayload(toPayload(document))
 					.build())
 				.toList();
@@ -208,12 +209,17 @@ public class QdrantVectorStore extends AbstractObservationVectorStore implements
 		try {
 			var id = point.getId().getUuid();
 
-			var payload = QdrantObjectFactory.toObjectMap(point.getPayloadMap());
-			payload.put(DISTANCE_FIELD_NAME, 1 - point.getScore());
+			var metadata = QdrantObjectFactory.toObjectMap(point.getPayloadMap());
+			metadata.put(DocumentMetadata.DISTANCE.value(), 1 - point.getScore());
 
-			var content = (String) payload.remove(CONTENT_FIELD_NAME);
+			var content = (String) metadata.remove(CONTENT_FIELD_NAME);
 
-			return new Document(id, content, payload);
+			return Document.builder()
+				.id(id)
+				.content(content)
+				.metadata(metadata)
+				.score((double) point.getScore())
+				.build();
 		}
 		catch (Exception e) {
 			throw new RuntimeException(e);

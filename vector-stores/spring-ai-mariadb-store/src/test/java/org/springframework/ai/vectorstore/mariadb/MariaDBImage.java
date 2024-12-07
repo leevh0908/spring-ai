@@ -14,17 +14,15 @@
  * limitations under the License.
  */
 
-package org.springframework.ai.vectorstore;
+package org.springframework.ai.vectorstore.mariadb;
 
-import org.springframework.ai.vectorstore.filter.Filter;
-import org.springframework.ai.vectorstore.filter.converter.PineconeFilterExpressionConverter;
+import org.testcontainers.utility.DockerImageName;
 
 /**
- * Converts {@link Filter.Expression} into Chroma metadata filter expression format.
- * (https://docs.trychroma.com/usage-guide#using-where-filters)
- *
- * @author Christian Tzolov
+ * @author Diego Dupin
  */
-public class ChromaFilterExpressionConverter extends PineconeFilterExpressionConverter {
+public class MariaDBImage {
+
+	public static final DockerImageName DEFAULT_IMAGE = DockerImageName.parse("mariadb:11.7-rc");
 
 }

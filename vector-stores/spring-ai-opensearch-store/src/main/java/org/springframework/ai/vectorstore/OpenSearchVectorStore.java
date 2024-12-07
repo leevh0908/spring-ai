@@ -19,6 +19,7 @@ package org.springframework.ai.vectorstore;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -40,6 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.springframework.ai.document.Document;
+import org.springframework.ai.document.DocumentMetadata;
 import org.springframework.ai.embedding.BatchingStrategy;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingOptionsBuilder;
@@ -50,7 +52,6 @@ import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.ai.vectorstore.filter.FilterExpressionConverter;
 import org.springframework.ai.vectorstore.observation.AbstractObservationVectorStore;
 import org.springframework.ai.vectorstore.observation.VectorStoreObservationContext;
-import org.springframework.ai.vectorstore.observation.VectorStoreObservationContext.Builder;
 import org.springframework.ai.vectorstore.observation.VectorStoreObservationConvention;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.util.Assert;
@@ -143,11 +144,14 @@ public class OpenSearchVectorStore extends AbstractObservationVectorStore implem
 
 	@Override
 	public void doAdd(List<Document> documents) {
-		this.embeddingModel.embed(documents, EmbeddingOptionsBuilder.builder().build(), this.batchingStrategy);
+		List<float[]> embedding = this.embeddingModel.embed(documents, EmbeddingOptionsBuilder.builder().build(),
+				this.batchingStrategy);
 		BulkRequest.Builder bulkRequestBuilder = new BulkRequest.Builder();
 		for (Document document : documents) {
-			bulkRequestBuilder
-				.operations(op -> op.index(idx -> idx.index(this.index).id(document.getId()).document(document)));
+			OpenSearchDocument openSearchDocument = new OpenSearchDocument(document.getId(), document.getContent(),
+					document.getMetadata(), embedding.get(documents.indexOf(document)));
+			bulkRequestBuilder.operations(op -> op
+				.index(idx -> idx.index(this.index).id(openSearchDocument.id()).document(openSearchDocument)));
 		}
 		bulkRequest(bulkRequestBuilder.build());
 	}
@@ -231,8 +235,12 @@ public class OpenSearchVectorStore extends AbstractObservationVectorStore implem
 
 	private Document toDocument(Hit<Document> hit) {
 		Document document = hit.source();
-		document.getMetadata().put("distance", 1 - hit.score().floatValue());
-		return document;
+		Document.Builder documentBuilder = document.mutate();
+		if (hit.score() != null) {
+			documentBuilder.metadata(DocumentMetadata.DISTANCE.value(), 1 - hit.score().floatValue());
+			documentBuilder.score(hit.score());
+		}
+		return documentBuilder.build();
 	}
 
 	public boolean exists(String targetIndex) {
@@ -269,7 +277,7 @@ public class OpenSearchVectorStore extends AbstractObservationVectorStore implem
 	}
 
 	@Override
-	public Builder createObservationContextBuilder(String operationName) {
+	public VectorStoreObservationContext.Builder createObservationContextBuilder(String operationName) {
 		return VectorStoreObservationContext.builder(VectorStoreProvider.OPENSEARCH.value(), operationName)
 			.withCollectionName(this.index)
 			.withDimensions(this.embeddingModel.dimensions())
@@ -285,6 +293,17 @@ public class OpenSearchVectorStore extends AbstractObservationVectorStore implem
 		}
 
 		return this.similarityFunction;
+	}
+
+	/**
+	 * The representation of {@link Document} along with its embedding.
+	 *
+	 * @param id The id of the document
+	 * @param content The content of the document
+	 * @param metadata The metadata of the document
+	 * @param embedding The vectors representing the content of the document
+	 */
+	public record OpenSearchDocument(String id, String content, Map<String, Object> metadata, float[] embedding) {
 	}
 
 }
